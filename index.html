@@ -589,6 +589,66 @@
     .main-content { padding: 16px; }
     .topbar { padding: 12px 16px; }
   }
+
+  /* Daily Max Account Minus Table */
+  .mam-table-wrap {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .mam-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .mam-table thead th {
+    background: var(--surface);
+    padding: 12px 16px;
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+    border-bottom: 1px solid var(--border);
+  }
+  .mam-table tbody tr {
+    border-bottom: 1px solid rgba(30,45,69,0.5);
+    transition: background 0.15s;
+  }
+  .mam-table tbody tr:hover { background: rgba(239,68,68,0.04); }
+  .mam-table tbody td {
+    padding: 10px 16px;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+  .mam-bar-cell { width: 180px; }
+  .mam-bar-wrap { width: 100%; height: 6px; background: var(--surface); border-radius: 3px; overflow: hidden; }
+  .mam-bar { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #ef4444, #f97316); }
+  .mam-zero { color: var(--muted); font-style: italic; }
+  .mam-value { color: var(--red); font-weight: 700; }
+  .mam-value.zero { color: var(--green); font-weight: 600; }
+  .mam-summary-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .mam-summary-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .mam-summary-card.red { border-color: rgba(239,68,68,0.3); }
+  .mam-summary-card.green { border-color: rgba(16,185,129,0.3); }
+  @media (max-width: 700px) {
+    .mam-summary-row { grid-template-columns: 1fr; }
+    .mam-bar-cell { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -729,6 +789,27 @@
         </div>
         <div class="chart-wrap"><canvas id="hourlyChart"></canvas></div>
       </div>
+    </div>
+
+    <!-- Daily Max Account Minus -->
+    <div class="section-title">Daily Max Account Minus</div>
+    <div id="mamSummaryRow" class="mam-summary-row"></div>
+    <div class="mam-table-wrap">
+      <table class="mam-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Date</th>
+            <th>Trades</th>
+            <th>Max Account Minus ($)</th>
+            <th>Daily Net P&L ($)</th>
+            <th>Worst Trade ($)</th>
+            <th>Depth Bar</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="mamTableBody"></tbody>
+      </table>
     </div>
 
     <!-- Trade Table -->
@@ -1164,10 +1245,79 @@ function renderDashboard(meta, trades, s) {
   // Render table (first page)
   currentPage = 0;
   renderTable();
+  renderMaxAccountMinusTable(trades);
 
   document.getElementById('loading').style.display = 'none';
   document.getElementById('upload-screen').style.display = 'none';
   document.getElementById('dashboard').style.display = 'block';
+}
+
+function renderMaxAccountMinusTable(trades) {
+  const grouped = groupTradesByDay(trades);
+  const days = Object.keys(grouped);
+
+  // Build per-day stats
+  const dayRows = days.map(date => {
+    const dt = grouped[date];
+    let runPnl = 0, maxMinus = 0;
+    dt.forEach(t => {
+      runPnl += t.profit + t.commission + t.swap;
+      if (runPnl < maxMinus) maxMinus = runPnl;
+    });
+    const net = dt.reduce((a,t) => a + t.profit + t.commission + t.swap, 0);
+    const worstTrade = Math.min(...dt.map(t => t.profit));
+    return { date, count: dt.length, maxMinus, net, worstTrade };
+  });
+
+  // Summary stats
+  const daysWithMinus = dayRows.filter(r => r.maxMinus < 0);
+  const worstDay = dayRows.reduce((a,b) => b.maxMinus < a.maxMinus ? b : a, dayRows[0]);
+  const totalDays = dayRows.length;
+  const deepest = Math.abs(Math.min(...dayRows.map(r => r.maxMinus)));
+
+  document.getElementById('mamSummaryRow').innerHTML = `
+    <div class="mam-summary-card red">
+      <div class="stat-label">Worst Day (Max Minus)</div>
+      <div style="font-family:var(--font-mono);color:var(--red);font-size:22px;font-weight:700;margin:8px 0">-$${deepest.toFixed(2)}</div>
+      <div class="stat-sub">${worstDay ? worstDay.date : '—'}</div>
+    </div>
+    <div class="mam-summary-card red">
+      <div class="stat-label">Days Went Negative</div>
+      <div style="font-family:var(--font-mono);color:var(--yellow);font-size:22px;font-weight:700;margin:8px 0">${daysWithMinus.length} / ${totalDays}</div>
+      <div class="stat-sub">${((daysWithMinus.length/totalDays)*100).toFixed(1)}% of trading days</div>
+    </div>
+    <div class="mam-summary-card green">
+      <div class="stat-label">Days Stayed Positive</div>
+      <div style="font-family:var(--font-mono);color:var(--green);font-size:22px;font-weight:700;margin:8px 0">${totalDays - daysWithMinus.length} / ${totalDays}</div>
+      <div class="stat-sub">${(((totalDays-daysWithMinus.length)/totalDays)*100).toFixed(1)}% clean days</div>
+    </div>`;
+
+  // Bar scale: worst absolute value = 100%
+  const maxAbs = deepest || 1;
+
+  document.getElementById('mamTableBody').innerHTML = dayRows.map((r, i) => {
+    const hasMinus = r.maxMinus < 0;
+    const barPct = hasMinus ? (Math.abs(r.maxMinus) / maxAbs * 100).toFixed(1) : 0;
+    const netColor = r.net >= 0 ? 'var(--green)' : 'var(--red)';
+    const netSign = r.net >= 0 ? '+' : '';
+    const statusBadge = !hasMinus
+      ? `<span style="background:rgba(16,185,129,0.15);color:var(--green);padding:3px 10px;border-radius:20px;font-size:10px;letter-spacing:1px">✓ CLEAN</span>`
+      : `<span style="background:rgba(239,68,68,0.12);color:var(--red);padding:3px 10px;border-radius:20px;font-size:10px;letter-spacing:1px">⚠ NEGATIVE</span>`;
+    return `<tr>
+      <td style="color:var(--muted)">${i+1}</td>
+      <td style="font-weight:600;color:var(--text)">${r.date}</td>
+      <td style="color:var(--muted)">${r.count}</td>
+      <td class="${hasMinus ? 'mam-value' : 'mam-value zero'}">${hasMinus ? '-$'+Math.abs(r.maxMinus).toFixed(2) : '$0.00'}</td>
+      <td style="color:${netColor};font-weight:600">${netSign}$${Math.abs(r.net).toFixed(2)}</td>
+      <td style="color:${r.worstTrade < 0 ? 'var(--red)' : 'var(--green)'}">${r.worstTrade >= 0 ? '+' : ''}$${r.worstTrade.toFixed(2)}</td>
+      <td class="mam-bar-cell">
+        ${hasMinus
+          ? `<div class="mam-bar-wrap"><div class="mam-bar" style="width:${barPct}%"></div></div>`
+          : `<div class="mam-bar-wrap"><div style="height:6px;border-radius:3px;background:rgba(16,185,129,0.25);width:4px"></div></div>`}
+      </td>
+      <td>${statusBadge}</td>
+    </tr>`;
+  }).join('');
 }
 
 function renderTable() {
